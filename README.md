@@ -1,6 +1,6 @@
 # YTmp3DL by oxy
 
-A simple Windows application that allows users to download videos from YouTube using URLs and convert them into various file formats.
+A simple application that allows users to download videos from YouTube using URLs and convert them into various file formats.
 
 ## Features
 
