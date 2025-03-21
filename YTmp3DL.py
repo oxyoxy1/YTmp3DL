@@ -6,6 +6,7 @@ import os
 import subprocess
 import threading
 import sys
+import re
 
 def show_error(error_message):
     """Display an error in a new window with selectable text."""
@@ -14,7 +15,7 @@ def show_error(error_message):
 
     error_text = tk.Text(error_window, wrap='word', width=50, height=10)
     error_text.insert(tk.END, error_message)
-    error_text.config(state='disabled')  # Make it non-editable but selectable
+    error_text.config(state='disabled')
     error_text.pack(padx=10, pady=10)
 
     close_button = tk.Button(error_window, text="Close", command=error_window.destroy)
@@ -22,8 +23,12 @@ def show_error(error_message):
 
     error_window.mainloop()
 
+def sanitize_filename(filename):
+    """Remove or replace characters that may cause issues in filenames."""
+    return re.sub(r'[<>:"/\\|?*\[\],]', '_', filename)
+
 def download_audio_thread():
-    """Download audio and update progress in the background."""
+    """Download audio and convert it safely."""
     url = url_entry.get()
     format_choice = format_var.get()
 
@@ -33,69 +38,50 @@ def download_audio_thread():
 
     current_directory = os.getcwd()
 
-    # yt-dlp options for downloading the audio
     ydl_opts = {
-        'format': 'bestaudio[ext=m4a]+bestvideo[ext=mp4]/best',  # Forces MP4 download
-        'extractaudio': True,  # Download audio only
-        'audioquality': 1,  # Best quality
-        'outtmpl': os.path.join(current_directory, '%(title)s.%(ext)s'),  # Save in current directory
-        'progress_hooks': [update_progress],  # Hook to capture progress
-        'quiet': True  # Hide terminal output from yt-dlp
+        'format': 'bestaudio/best',
+        'outtmpl': os.path.join(current_directory, '%(title)s.%(ext)s'),
+        'progress_hooks': [update_progress],
+        'quiet': True
     }
 
     try:
-        # Debug: Start download process
         print(f"Attempting download from: {url}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=True)  # Ensure downloading
+            info_dict = ydl.extract_info(url, download=True)
             video_file = ydl.prepare_filename(info_dict)
 
-        # Ensure paths are using correct separators for Windows
         sanitized_video_file = os.path.abspath(video_file)
-
         if not os.path.exists(sanitized_video_file):
             show_error("Download failed, file doesn't exist.")
-            print(f"File not found after download: {sanitized_video_file}")
             return
 
         print(f"Download successful: {sanitized_video_file}")
 
-        # Get the downloaded video file extension (e.g., mp4)
-        video_extension = sanitized_video_file.split('.')[-1]
-
-        output_file = os.path.join(current_directory, f"{os.path.splitext(info_dict['title'])[0].replace(' ', '_')}.{format_choice}")
-
+        # **Sanitize output filename**
+        sanitized_title = sanitize_filename(info_dict['title'])
+        output_file = os.path.join(current_directory, f"{sanitized_title}.{format_choice}")
         output_file = os.path.abspath(output_file)
 
-        print(f"Video file: {sanitized_video_file}")
-        print(f"Output file: {output_file}")
+        print(f"Sanitized output file: {output_file}")
 
-        # Convert video to the selected audio format using FFmpeg via subprocess
         ffmpeg_command = [
             'ffmpeg', '-i', sanitized_video_file,
-            '-vn',  # No video
-            '-acodec', 'libmp3lame' if format_choice == 'mp3' else 'pcm_s16le',
-            '-ar', '44100',  # Audio sample rate
-            '-ac', '2',  # Stereo channels
-            '-b:a', '192k',  # Set the bitrate for the audio file (for MP3)
-            '-y',  # Overwrite output file if it exists
-            output_file
+            '-vn', '-acodec', 'libmp3lame' if format_choice == 'mp3' else 'pcm_s16le',
+            '-ar', '44100', '-ac', '2', '-b:a', '192k', '-y', output_file
         ]
 
-        # Run FFmpeg in the background without displaying terminal output
-        result = subprocess.run(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        result = subprocess.run(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
 
-        # Check if FFmpeg ran successfully
         if result.returncode != 0:
-            show_error(f"FFmpeg failed with error:\n{result.stderr}")
+            show_error(f"FFmpeg failed:\n{result.stderr}")
             print(f"FFmpeg error: {result.stderr}")
             return
 
-        if video_extension != format_choice:
-            os.remove(sanitized_video_file)
-
-        messagebox.showinfo("Success", f"Download/conversion complete! File saved to: {output_file} :)")
+        os.remove(sanitized_video_file)
+        messagebox.showinfo("Success", f"Download/conversion complete! File saved to:\n{output_file}")
     except Exception as e:
         show_error(f"An error occurred: {str(e)}")
 
@@ -105,21 +91,19 @@ def update_progress(d):
         if 'downloaded_bytes' in d and 'total_bytes' in d:
             progress = int(d['downloaded_bytes'] / d['total_bytes'] * 100)
             progress_bar['value'] = progress
-            window.update_idletasks()  # Update the window
+            window.update_idletasks()
     elif d['status'] == 'finished':
         progress_bar['value'] = 100
         window.update_idletasks()
 
 def start_download():
     """Start the download process in a separate thread."""
-    progress_bar['value'] = 0  # Reset progress bar
+    progress_bar['value'] = 0
     threading.Thread(target=download_audio_thread, daemon=True).start()
 
 # Creating the main window
 window = tk.Tk()
 window.title("YTmp3DL - oxy")
-
-# Removed the icon setting, using the default system icon
 
 # URL input
 url_label = tk.Label(window, text="Enter YouTube URL:")
